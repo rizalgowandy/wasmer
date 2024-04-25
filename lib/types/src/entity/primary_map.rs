@@ -12,12 +12,9 @@ use crate::lib::std::marker::PhantomData;
 use crate::lib::std::ops::{Index, IndexMut};
 use crate::lib::std::slice;
 use crate::lib::std::vec::Vec;
-use loupe::{MemoryUsage, MemoryUsageTracker};
-#[cfg(feature = "enable-rkyv")]
-use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
+use rkyv::{Archive, Archived, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 #[cfg(feature = "enable-serde")]
 use serde::{Deserialize, Serialize};
-use std::mem;
 
 /// A primary mapping `K -> V` allocating dense entity references.
 ///
@@ -36,10 +33,8 @@ use std::mem;
 /// `into_boxed_slice`.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "enable-serde", derive(Serialize, Deserialize))]
-#[cfg_attr(
-    feature = "enable-rkyv",
-    derive(RkyvSerialize, RkyvDeserialize, Archive)
-)]
+#[derive(RkyvSerialize, RkyvDeserialize, Archive)]
+#[archive_attr(derive(rkyv::CheckBytes))]
 pub struct PrimaryMap<K, V>
 where
     K: EntityRef,
@@ -161,12 +156,34 @@ where
     }
 }
 
+impl<K, V> ArchivedPrimaryMap<K, V>
+where
+    K: EntityRef,
+    V: Archive,
+{
+    /// Get the element at `k` if it exists.
+    pub fn get(&self, k: K) -> Option<&V::Archived> {
+        self.elems.get(k.index())
+    }
+}
+
+impl<K, V> std::fmt::Debug for ArchivedPrimaryMap<K, V>
+where
+    K: EntityRef + std::fmt::Debug,
+    V: Archive,
+    V::Archived: std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map().entries(self.iter()).finish()
+    }
+}
+
 impl<K, V> Default for PrimaryMap<K, V>
 where
     K: EntityRef,
 {
-    fn default() -> PrimaryMap<K, V> {
-        PrimaryMap::new()
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -244,18 +261,35 @@ where
     }
 }
 
-impl<K, V> MemoryUsage for PrimaryMap<K, V>
+impl<K, V> ArchivedPrimaryMap<K, V>
 where
     K: EntityRef,
-    V: MemoryUsage,
+    V: Archive,
+    V::Archived: std::fmt::Debug,
 {
-    fn size_of_val(&self, tracker: &mut dyn MemoryUsageTracker) -> usize {
-        mem::size_of_val(self)
-            + self
-                .elems
-                .iter()
-                .map(|value| value.size_of_val(tracker) - mem::size_of_val(value))
-                .sum::<usize>()
+    /// Iterator over all values in the `ArchivedPrimaryMap`
+    pub fn values(&self) -> slice::Iter<Archived<V>> {
+        self.elems.iter()
+    }
+
+    /// Iterate over all the keys and values in this map.
+    pub fn iter(&self) -> Iter<K, Archived<V>> {
+        Iter::new(self.elems.iter())
+    }
+}
+
+/// Immutable indexing into an `ArchivedPrimaryMap`.
+/// The indexed value must be in the map.
+impl<K, V> Index<K> for ArchivedPrimaryMap<K, V>
+where
+    K: EntityRef,
+    V: Archive,
+    V::Archived: std::fmt::Debug,
+{
+    type Output = Archived<V>;
+
+    fn index(&self, k: K) -> &Self::Output {
+        &self.elems[k.index()]
     }
 }
 
@@ -269,7 +303,7 @@ mod tests {
 
     impl EntityRef for E {
         fn new(i: usize) -> Self {
-            E(i as u32)
+            Self(i as u32)
         }
         fn index(self) -> usize {
             self.0 as usize
@@ -364,10 +398,8 @@ mod tests {
         m.push(12);
         m.push(33);
 
-        let mut i = 0;
-        for key in m.keys() {
+        for (i, key) in m.keys().enumerate() {
             assert_eq!(key.index(), i);
-            i += 1;
         }
     }
 

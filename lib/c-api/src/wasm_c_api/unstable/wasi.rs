@@ -2,15 +2,8 @@
 //! API.
 
 use super::super::{
-    externals::wasm_extern_t,
-    module::wasm_module_t,
-    store::wasm_store_t,
-    types::{owned_wasm_name_t, wasm_name_t},
-    wasi::wasi_env_t,
+    externals::wasm_extern_t, module::wasm_module_t, types::wasm_name_t, wasi::wasi_env_t,
 };
-use crate::error::CApiError;
-use wasmer_api::Extern;
-use wasmer_wasi::{generate_import_object_from_env, get_wasi_version};
 
 /// Unstable non-standard type wrapping `wasm_extern_t` with the
 /// addition of two `wasm_name_t` respectively for the module name and
@@ -22,8 +15,8 @@ use wasmer_wasi::{generate_import_object_from_env, get_wasi_version};
 #[allow(non_camel_case_types)]
 #[derive(Clone)]
 pub struct wasmer_named_extern_t {
-    module: owned_wasm_name_t,
-    name: owned_wasm_name_t,
+    module: wasm_name_t,
+    name: wasm_name_t,
     r#extern: Box<wasm_extern_t>,
 }
 
@@ -121,7 +114,7 @@ mod __cbindgen_hack__ {
 pub extern "C" fn wasmer_named_extern_module(
     named_extern: Option<&wasmer_named_extern_t>,
 ) -> Option<&wasm_name_t> {
-    Some(named_extern?.module.as_ref())
+    Some(&named_extern?.module)
 }
 
 /// Non-standard function to get the name of a `wasmer_named_extern_t`.
@@ -131,7 +124,7 @@ pub extern "C" fn wasmer_named_extern_module(
 pub extern "C" fn wasmer_named_extern_name(
     named_extern: Option<&wasmer_named_extern_t>,
 ) -> Option<&wasm_name_t> {
-    Some(named_extern?.name.as_ref())
+    Some(&named_extern?.name)
 }
 
 /// Non-standard function to get the wrapped extern of a
@@ -151,49 +144,40 @@ pub extern "C" fn wasmer_named_extern_unwrap(
 /// based on the `wasm_module_t` requirements.
 #[no_mangle]
 pub unsafe extern "C" fn wasi_get_unordered_imports(
-    store: Option<&wasm_store_t>,
+    wasi_env: Option<&mut wasi_env_t>,
     module: Option<&wasm_module_t>,
-    wasi_env: Option<&wasi_env_t>,
     imports: &mut wasmer_named_extern_vec_t,
 ) -> bool {
-    wasi_get_unordered_imports_inner(store, module, wasi_env, imports).is_some()
+    wasi_get_unordered_imports_inner(wasi_env, module, imports).is_some()
 }
 
-fn wasi_get_unordered_imports_inner(
-    store: Option<&wasm_store_t>,
+unsafe fn wasi_get_unordered_imports_inner(
+    wasi_env: Option<&mut wasi_env_t>,
     module: Option<&wasm_module_t>,
-    wasi_env: Option<&wasi_env_t>,
     imports: &mut wasmer_named_extern_vec_t,
 ) -> Option<()> {
-    let store = store?;
-    let module = module?;
     let wasi_env = wasi_env?;
+    let store = &mut wasi_env.store;
+    let mut store_mut = store.store_mut();
+    let module = module?;
 
-    let store = &store.inner;
+    let import_object = c_try!(wasi_env.inner.import_object(&mut store_mut, &module.inner));
 
-    let version = c_try!(
-        get_wasi_version(&module.inner, false).ok_or_else(|| CApiError {
-            msg: "could not detect a WASI version on the given module".to_string(),
-        })
-    );
+    imports.set_buffer(
+        import_object
+            .into_iter()
+            .map(move |((module, name), extern_)| {
+                let module = module.into();
+                let name = name.into();
 
-    let import_object = generate_import_object_from_env(store, wasi_env.inner.clone(), version);
-
-    *imports = import_object
-        .into_iter()
-        .map(|((module, name), export)| {
-            let module = module.into();
-            let name = name.into();
-            let extern_inner = Extern::from_vm_export(store, export);
-
-            Box::new(wasmer_named_extern_t {
-                module,
-                name,
-                r#extern: Box::new(extern_inner.into()),
+                Some(Box::new(wasmer_named_extern_t {
+                    module,
+                    name,
+                    r#extern: Box::new(wasm_extern_t::new(store.clone(), extern_)),
+                }))
             })
-        })
-        .collect::<Vec<_>>()
-        .into();
+            .collect::<Vec<_>>(),
+    );
 
     Some(())
 }

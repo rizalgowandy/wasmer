@@ -1,5 +1,6 @@
 use super::store::wasm_store_t;
-use super::types::{wasm_byte_vec_t, wasm_frame_t, wasm_frame_vec_t, wasm_message_t};
+use super::types::{wasm_byte_vec_t, wasm_message_t};
+use super::types::{wasm_frame_t, wasm_frame_vec_t};
 use std::ffi::CString;
 use wasmer_api::RuntimeError;
 
@@ -28,7 +29,7 @@ pub unsafe extern "C" fn wasm_trap_new(
     _store: &mut wasm_store_t,
     message: &wasm_message_t,
 ) -> Option<Box<wasm_trap_t>> {
-    let message_bytes = message.into_slice()?;
+    let message_bytes = message.as_slice();
 
     // The trap message is typed with `wasm_message_t` which is a
     // typeref to `wasm_name_t` with the exception that it's a
@@ -70,7 +71,7 @@ pub unsafe extern "C" fn wasm_trap_delete(_trap: Option<Box<wasm_trap_t>>) {}
 /// # Example
 ///
 /// ```rust
-/// # use inline_c::assert_c;
+/// # use wasmer_inline_c::assert_c;
 /// # fn main() {
 /// #    (assert_c! {
 /// # #include "tests/wasmer.h"
@@ -117,10 +118,7 @@ pub unsafe extern "C" fn wasm_trap_message(
     let mut byte_vec = message.into_bytes();
     byte_vec.push(0);
 
-    let byte_vec: wasm_byte_vec_t = byte_vec.into();
-
-    out.size = byte_vec.size;
-    out.data = byte_vec.data;
+    out.set_buffer(byte_vec);
 }
 
 /// Gets the origin frame attached to the trap.
@@ -137,16 +135,22 @@ pub unsafe extern "C" fn wasm_trap_trace(
     out: &mut wasm_frame_vec_t,
 ) {
     let frames = trap.inner.trace();
-    let frame_vec: wasm_frame_vec_t = frames.into();
-
-    out.size = frame_vec.size;
-    out.data = frame_vec.data;
+    out.set_buffer(
+        frames
+            .iter()
+            .map(|frame| Some(Box::new(frame.into())))
+            .collect(),
+    );
 }
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(target_os = "windows"))]
     use inline_c::assert_c;
+    #[cfg(target_os = "windows")]
+    use wasmer_inline_c::assert_c;
 
+    #[cfg_attr(coverage, ignore)]
     #[test]
     fn test_trap_message_null_terminated() {
         (assert_c! {
@@ -179,6 +183,7 @@ mod tests {
         .success();
     }
 
+    #[cfg_attr(coverage, ignore)]
     #[test]
     fn test_trap_message_not_null_terminated() {
         (assert_c! {

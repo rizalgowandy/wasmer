@@ -36,7 +36,7 @@ macro_rules! gen_tests {(
 gen_tests! {
     identity_for_no_unsafe:
     stringify! {
-        #[compiler_test(derive_test)]
+        #[compiler_test_impl(derive_test)]
         #[cold]
         fn foo(config: crate::Config) {
             // Do tests
@@ -54,21 +54,11 @@ gen_tests! {
             #[cfg(feature = "singlepass")]
             mod singlepass {
                 use super::*;
-                #[test_env_log::test]
+                #[test_log::test]
                 #[cold]
                 #[cfg(feature = "universal")]
                 fn universal() {
                     foo(crate::Config::new(
-                        crate::Engine::Universal,
-                        crate::Compiler::Singlepass
-                    ))
-                }
-                #[test_env_log::test]
-                #[cold]
-                #[cfg(feature = "dylib")]
-                fn dylib() {
-                    foo(crate::Config::new(
-                        crate::Engine::Dylib,
                         crate::Compiler::Singlepass
                     ))
                 }
@@ -77,21 +67,11 @@ gen_tests! {
             #[cfg(feature = "cranelift")]
             mod cranelift {
                 use super::*;
-                #[test_env_log::test]
+                #[test_log::test]
                 #[cold]
                 #[cfg(feature = "universal")]
                 fn universal() {
                     foo(crate::Config::new(
-                        crate::Engine::Universal,
-                        crate::Compiler::Cranelift
-                    ))
-                }
-                #[test_env_log::test]
-                #[cold]
-                #[cfg(feature = "dylib")]
-                fn dylib() {
-                    foo(crate::Config::new(
-                        crate::Engine::Dylib,
                         crate::Compiler::Cranelift
                     ))
                 }
@@ -100,21 +80,11 @@ gen_tests! {
             #[cfg(feature = "llvm")]
             mod llvm {
                 use super::*;
-                #[test_env_log::test]
+                #[test_log::test]
                 #[cold]
                 #[cfg(feature = "universal")]
                 fn universal() {
                     foo(crate::Config::new(
-                        crate::Engine::Universal,
-                        crate::Compiler::LLVM
-                    ))
-                }
-                #[test_env_log::test]
-                #[cold]
-                #[cfg(feature = "dylib")]
-                fn dylib() {
-                    foo(crate::Config::new(
-                        crate::Engine::Dylib,
                         crate::Compiler::LLVM
                     ))
                 }

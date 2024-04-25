@@ -1,15 +1,19 @@
 //! A convenient little abstraction for building up C expressions and generating
 //! simple C code.
 
+#![allow(dead_code)]
+
 pub mod staticlib_header;
 
 /// An identifier in C.
 pub type CIdent = String;
 
 /// A Type in the C language.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub enum CType {
     /// C `void` type.
+    #[default]
     Void,
     /// A pointer to some other type.
     PointerTo {
@@ -122,22 +126,27 @@ impl CType {
                 return_value,
             } => {
                 // function with no, name, assume it's a function pointer
+                #[allow(clippy::borrowed_box)]
                 let ret: CType = return_value
                     .as_ref()
-                    .map(|i: &Box<CType>| (&**i).clone())
+                    .map(|i: &Box<CType>| (**i).clone())
                     .unwrap_or_default();
                 ret.generate_c(w);
                 w.push(' ');
                 w.push_str("(*)");
                 w.push('(');
-                if arguments.len() > 1 {
-                    for arg in &arguments[..arguments.len() - 1] {
-                        arg.generate_c(w);
-                        w.push_str(", ");
+                match arguments.len() {
+                    l if l > 1 => {
+                        for arg in &arguments[..arguments.len() - 1] {
+                            arg.generate_c(w);
+                            w.push_str(", ");
+                        }
+                        arguments.last().unwrap().generate_c(w);
                     }
-                    arguments.last().unwrap().generate_c(w);
-                } else if arguments.len() == 1 {
-                    arguments[0].generate_c(w);
+                    1 => {
+                        arguments[0].generate_c(w);
+                    }
+                    _ => {}
                 }
                 w.push(')');
             }
@@ -146,7 +155,7 @@ impl CType {
                 w.push_str("[]");
             }
             Self::TypeDef(inner) => {
-                w.push_str(&inner);
+                w.push_str(inner);
             }
         }
     }
@@ -175,38 +184,37 @@ impl CType {
                 arguments,
                 return_value,
             } => {
+                #[allow(clippy::borrowed_box)]
                 let ret: CType = return_value
                     .as_ref()
-                    .map(|i: &Box<CType>| (&**i).clone())
+                    .map(|i: &Box<CType>| (**i).clone())
                     .unwrap_or_default();
                 ret.generate_c(w);
                 w.push(' ');
-                w.push_str(&name);
+                w.push_str(name);
                 w.push('(');
-                if arguments.len() > 1 {
-                    for arg in &arguments[..arguments.len() - 1] {
-                        arg.generate_c(w);
-                        w.push_str(", ");
+                match arguments.len() {
+                    l if l > 1 => {
+                        for arg in &arguments[..arguments.len() - 1] {
+                            arg.generate_c(w);
+                            w.push_str(", ");
+                        }
+                        arguments.last().unwrap().generate_c(w);
                     }
-                    arguments.last().unwrap().generate_c(w);
-                } else if arguments.len() == 1 {
-                    arguments[0].generate_c(w);
+                    1 => {
+                        arguments[0].generate_c(w);
+                    }
+                    _ => {}
                 }
                 w.push(')');
             }
             Self::Array { inner } => {
                 inner.generate_c(w);
                 w.push(' ');
-                w.push_str(&name);
+                w.push_str(name);
                 w.push_str("[]");
             }
         }
-    }
-}
-
-impl Default for CType {
-    fn default() -> CType {
-        CType::Void
     }
 }
 
@@ -299,7 +307,7 @@ impl CStatement {
                 w.push('}');
             }
             Self::LiteralConstant { value } => {
-                w.push_str(&value);
+                w.push_str(value);
             }
             Self::Cast {
                 target_type,
@@ -322,7 +330,7 @@ impl CStatement {
                 } else {
                     source_type.generate_c(w);
                     w.push(' ');
-                    w.push_str(&new_name);
+                    w.push_str(new_name);
                 }
                 w.push(';');
                 w.push('\n');

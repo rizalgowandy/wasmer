@@ -4,18 +4,18 @@ use wasmer_api::{ExternType, MemoryType, Pages};
 #[derive(Debug, Clone)]
 pub(crate) struct WasmMemoryType {
     pub(crate) memory_type: MemoryType,
-    limits: Box<wasm_limits_t>,
+    limits: wasm_limits_t,
 }
 
 impl WasmMemoryType {
     pub(crate) fn new(memory_type: MemoryType) -> Self {
-        let limits = Box::new(wasm_limits_t {
+        let limits = wasm_limits_t {
             min: memory_type.minimum.0 as _,
             max: memory_type
                 .maximum
                 .map(|max| max.0 as _)
                 .unwrap_or(LIMITS_MAX_SENTINEL),
-        });
+        };
 
         Self {
             memory_type,
@@ -40,7 +40,7 @@ impl wasm_memorytype_t {
 
     pub(crate) fn inner(&self) -> &WasmMemoryType {
         match &self.extern_type.inner {
-            WasmExternType::Memory(wasm_memory_type) => &wasm_memory_type,
+            WasmExternType::Memory(wasm_memory_type) => wasm_memory_type,
             _ => {
                 unreachable!("Data corruption: `wasm_memorytype_t` does not contain a memory type")
             }
@@ -79,5 +79,5 @@ const LIMITS_MAX_SENTINEL: u32 = u32::max_value();
 
 #[no_mangle]
 pub unsafe extern "C" fn wasm_memorytype_limits(memory_type: &wasm_memorytype_t) -> &wasm_limits_t {
-    memory_type.inner().limits.as_ref()
+    &memory_type.inner().limits
 }

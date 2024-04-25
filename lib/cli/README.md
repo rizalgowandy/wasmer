@@ -16,27 +16,18 @@ Or by building it inside the codebase:
 cargo build --release --features "singlepass,cranelift"
 ```
 
-> Note: installing `wasmer` via Cargo (or manual install) will not install
-> the WAPM cli. If you want to use them together, please use the [wasmer installer](https://github.com/wasmerio/wasmer-install).
-
-
 ## Features
 
 The Wasmer supports the following features:
 * `wat` (default): support for executing WebAssembly text files.
 * `wast`(default): support for running wast test files.
-* `universal` (default): support for the [Universal engine].
-* `dylib` (default): support for the [Dylib engine].
 * `cache` (default): support or automatically caching compiled artifacts.
 * `wasi` (default): support for [WASI].
-* `experimental-io-devices`: support for experimental IO devices in WASI.
 * `emscripten` (default): support for [Emscripten].
 * `singlepass`: support for the [Singlepass compiler].
 * `cranelift`: support for the [Cranelift compiler].
 * `llvm`: support for the [LLVM compiler].
 
-[Universal engine]: https://github.com/wasmerio/wasmer/tree/master/lib/engine-universal/
-[Dylib engine]: https://github.com/wasmerio/wasmer/tree/master/lib/engine-dylib/
 [WASI]: https://github.com/wasmerio/wasmer/tree/master/lib/wasi/
 [Emscripten]: https://github.com/wasmerio/wasmer/tree/master/lib/emscripten/
 [Singlepass compiler]: https://github.com/wasmerio/wasmer/tree/master/lib/compiler-singlepass/
@@ -62,11 +53,11 @@ wasmer run myfile.wasm
 Compile a WebAssembly file:
 
 ```bash
-wasmer compile myfile.wasm -o myfile.so --dylib
+wasmer compile myfile.wasm -o myfile.wasmu
 ```
 
 Run a compiled WebAssembly file (fastest):
 
 ```bash
-wasmer run myfile.so
+wasmer run myfile.wasmu
 ```

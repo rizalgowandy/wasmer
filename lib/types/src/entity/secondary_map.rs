@@ -11,16 +11,13 @@ use crate::lib::std::marker::PhantomData;
 use crate::lib::std::ops::{Index, IndexMut};
 use crate::lib::std::slice;
 use crate::lib::std::vec::Vec;
-use loupe::{MemoryUsage, MemoryUsageTracker};
-#[cfg(feature = "enable-rkyv")]
-use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
+use rkyv::{Archive, Archived, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 #[cfg(feature = "enable-serde")]
 use serde::{
     de::{Deserializer, SeqAccess, Visitor},
     ser::{SerializeSeq, Serializer},
     Deserialize, Serialize,
 };
-use std::mem;
 
 /// A mapping `K -> V` for densely indexed entity references.
 ///
@@ -30,11 +27,8 @@ use std::mem;
 ///
 /// The map does not track if an entry for a key has been inserted or not. Instead it behaves as if
 /// all keys have a default entry from the beginning.
-#[derive(Debug, Clone)]
-#[cfg_attr(
-    feature = "enable-rkyv",
-    derive(RkyvSerialize, RkyvDeserialize, Archive)
-)]
+#[derive(Debug, Clone, RkyvSerialize, RkyvDeserialize, Archive)]
+#[archive_attr(derive(rkyv::CheckBytes))]
 pub struct SecondaryMap<K, V>
 where
     K: EntityRef,
@@ -142,13 +136,45 @@ where
     }
 }
 
+impl<K, V> ArchivedSecondaryMap<K, V>
+where
+    K: EntityRef,
+    V: Archive + Clone,
+{
+    /// Get the element at `k` if it exists.
+    pub fn get(&self, k: K) -> Option<&V::Archived> {
+        self.elems.get(k.index())
+    }
+
+    /// Iterator over all values in the `ArchivedPrimaryMap`
+    pub fn values(&self) -> slice::Iter<Archived<V>> {
+        self.elems.iter()
+    }
+
+    /// Iterate over all the keys and values in this map.
+    pub fn iter(&self) -> Iter<K, Archived<V>> {
+        Iter::new(self.elems.iter())
+    }
+}
+
+impl<K, V> std::fmt::Debug for ArchivedSecondaryMap<K, V>
+where
+    K: EntityRef + std::fmt::Debug,
+    V: Archive + Clone,
+    V::Archived: std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map().entries(self.iter()).finish()
+    }
+}
+
 impl<K, V> Default for SecondaryMap<K, V>
 where
     K: EntityRef,
     V: Clone + Default,
 {
-    fn default() -> SecondaryMap<K, V> {
-        SecondaryMap::new()
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -287,21 +313,6 @@ where
     }
 }
 
-impl<K, V> MemoryUsage for SecondaryMap<K, V>
-where
-    K: EntityRef,
-    V: Clone + MemoryUsage,
-{
-    fn size_of_val(&self, tracker: &mut dyn MemoryUsageTracker) -> usize {
-        mem::size_of_val(self)
-            + self
-                .elems
-                .iter()
-                .map(|value| value.size_of_val(tracker) - mem::size_of_val(value))
-                .sum::<usize>()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,7 +323,7 @@ mod tests {
 
     impl EntityRef for E {
         fn new(i: usize) -> Self {
-            E(i as u32)
+            Self(i as u32)
         }
         fn index(self) -> usize {
             self.0 as usize

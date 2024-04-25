@@ -14,7 +14,7 @@ use inkwell::{
     types::FunctionType,
     values::{BasicValueEnum, CallSiteValue, FunctionValue, PointerValue},
 };
-use wasmer_compiler::CompileError;
+use wasmer_types::CompileError;
 use wasmer_types::FunctionType as FuncSig;
 use wasmer_vm::VMOffsets;
 
@@ -59,9 +59,10 @@ pub trait Abi {
         &self,
         alloca_builder: &Builder<'ctx>,
         func_sig: &FuncSig,
-        ctx_ptr: PointerValue<'ctx>,
         llvm_fn_ty: &FunctionType<'ctx>,
+        ctx_ptr: PointerValue<'ctx>,
         values: &[BasicValueEnum<'ctx>],
+        intrinsics: &Intrinsics<'ctx>,
     ) -> Vec<BasicValueEnum<'ctx>>;
 
     /// Given a CallSite, extract the returned values and return them in a Vec.

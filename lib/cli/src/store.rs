@@ -1,72 +1,94 @@
 //! Common module with common used structures across different
 //! commands.
 
-use crate::common::WasmFeatures;
-use anyhow::Result;
+// NOTE: A lot of this code depends on feature flags.
+// To not go crazy with annotations, some lints are disablefor the whole
+// module.
+#![allow(dead_code, unused_imports, unused_variables)]
+
 use std::path::PathBuf;
 use std::string::ToString;
-#[allow(unused_imports)]
 use std::sync::Arc;
-use structopt::StructOpt;
+
+use anyhow::{bail, Result};
+#[cfg(feature = "sys")]
+use wasmer::sys::Features;
 use wasmer::*;
 #[cfg(feature = "compiler")]
 use wasmer_compiler::CompilerConfig;
+#[cfg(feature = "compiler")]
+use wasmer_compiler::Engine;
 
-#[derive(Debug, Clone, StructOpt)]
-/// The compiler and engine options
+#[derive(Debug, Clone, clap::Parser, Default)]
+/// The compiler options
 pub struct StoreOptions {
-    #[structopt(flatten)]
+    #[cfg(feature = "compiler")]
+    #[clap(flatten)]
     compiler: CompilerOptions,
-
-    /// Use the Universal Engine.
-    #[structopt(long, conflicts_with_all = &["dylib", "staticlib", "jit", "native", "object_file"])]
-    universal: bool,
-
-    /// Use the Dylib Engine.
-    #[structopt(long, conflicts_with_all = &["universal", "staticlib", "jit", "native", "object_file"])]
-    dylib: bool,
-
-    /// Use the Staticlib Engine.
-    #[structopt(long, conflicts_with_all = &["universal", "dylib", "jit", "native", "object_file"])]
-    staticlib: bool,
-
-    /// Use the JIT (Universal) Engine.
-    #[structopt(long, hidden = true, conflicts_with_all = &["universal", "dylib", "staticlib", "native", "object_file"])]
-    jit: bool,
-
-    /// Use the Native (Dylib) Engine.
-    #[structopt(long, hidden = true, conflicts_with_all = &["universal", "dylib", "staticlib", "jit", "object_file"])]
-    native: bool,
-
-    /// Use the ObjectFile (Staticlib) Engine.
-    #[structopt(long, hidden = true, conflicts_with_all = &["universal", "dylib", "staticlib", "jit", "native"])]
-    object_file: bool,
 }
 
-#[derive(Debug, Clone, StructOpt)]
+#[derive(Debug, clap::Parser, Clone, Default)]
+/// The WebAssembly features that can be passed through the
+/// Command Line args.
+pub struct WasmFeatures {
+    /// Enable support for the SIMD proposal.
+    #[clap(long = "enable-simd")]
+    pub simd: bool,
+
+    /// Disable support for the threads proposal.
+    #[clap(long = "disable-threads")]
+    pub disable_threads: bool,
+
+    /// Deprecated, threads are enabled by default.
+    #[clap(long = "enable-threads")]
+    pub _threads: bool,
+
+    /// Enable support for the reference types proposal.
+    #[clap(long = "enable-reference-types")]
+    pub reference_types: bool,
+
+    /// Enable support for the multi value proposal.
+    #[clap(long = "enable-multi-value")]
+    pub multi_value: bool,
+
+    /// Enable support for the bulk memory proposal.
+    #[clap(long = "enable-bulk-memory")]
+    pub bulk_memory: bool,
+
+    /// Enable support for all pre-standard proposals.
+    #[clap(long = "enable-all")]
+    pub all: bool,
+}
+
+#[cfg(feature = "compiler")]
+#[derive(Debug, Clone, clap::Parser, Default)]
 /// The compiler options
 pub struct CompilerOptions {
     /// Use Singlepass compiler.
-    #[structopt(long, conflicts_with_all = &["cranelift", "llvm"])]
+    #[clap(long, conflicts_with_all = &["cranelift", "llvm"])]
     singlepass: bool,
 
     /// Use Cranelift compiler.
-    #[structopt(long, conflicts_with_all = &["singlepass", "llvm"])]
+    #[clap(long, conflicts_with_all = &["singlepass", "llvm"])]
     cranelift: bool,
 
     /// Use LLVM compiler.
-    #[structopt(long, conflicts_with_all = &["singlepass", "cranelift"])]
+    #[clap(long, conflicts_with_all = &["singlepass", "cranelift"])]
     llvm: bool,
 
     /// Enable compiler internal verification.
-    #[structopt(long)]
+    ///
+    /// Available for cranelift, LLVM and singlepass.
+    #[clap(long)]
     enable_verifier: bool,
 
     /// LLVM debug directory, where IR and object files will be written to.
-    #[structopt(long, parse(from_os_str))]
+    ///
+    /// Only available for the LLVM compiler.
+    #[clap(long)]
     llvm_debug_dir: Option<PathBuf>,
 
-    #[structopt(flatten)]
+    #[clap(flatten)]
     features: WasmFeatures,
 }
 
@@ -85,7 +107,7 @@ impl CompilerOptions {
                 if #[cfg(all(feature = "cranelift", any(target_arch = "x86_64", target_arch = "aarch64")))] {
                     Ok(CompilerType::Cranelift)
                 }
-                else if #[cfg(all(feature = "singlepass", target_arch = "x86_64"))] {
+                else if #[cfg(all(feature = "singlepass", any(target_arch = "x86_64", target_arch = "aarch64")))] {
                     Ok(CompilerType::Singlepass)
                 }
                 else if #[cfg(feature = "llvm")] {
@@ -99,8 +121,11 @@ impl CompilerOptions {
 
     /// Get the enaled Wasm features.
     pub fn get_features(&self, mut features: Features) -> Result<Features> {
-        if self.features.threads || self.features.all {
+        if !self.features.disable_threads || self.features.all {
             features.threads(true);
+        }
+        if self.features.disable_threads && !self.features.all {
+            features.threads(false);
         }
         if self.features.multi_value || self.features.all {
             features.multi_value(true);
@@ -117,53 +142,32 @@ impl CompilerOptions {
         Ok(features)
     }
 
-    /// Gets the Store for a given target and engine.
-    pub fn get_store_for_target_and_engine(
-        &self,
-        target: Target,
-        engine_type: EngineType,
-    ) -> Result<(Store, CompilerType)> {
+    /// Gets the Store for a given target.
+    pub fn get_store_for_target(&self, target: Target) -> Result<(Store, CompilerType)> {
         let (compiler_config, compiler_type) = self.get_compiler_config()?;
-        let engine = self.get_engine_by_type(target, compiler_config, engine_type)?;
-        let store = Store::new(&*engine);
+        let engine = self.get_engine(target, compiler_config)?;
+        let store = Store::new(engine);
         Ok((store, compiler_type))
     }
 
-    fn get_engine_by_type(
+    /// Gets the Engine for a given target.
+    pub fn get_engine_for_target(&self, target: Target) -> Result<(Engine, CompilerType)> {
+        let (compiler_config, compiler_type) = self.get_compiler_config()?;
+        let engine = self.get_engine(target, compiler_config)?;
+        Ok((engine, compiler_type))
+    }
+
+    #[cfg(feature = "compiler")]
+    fn get_engine(
         &self,
         target: Target,
         compiler_config: Box<dyn CompilerConfig>,
-        engine_type: EngineType,
-    ) -> Result<Box<dyn Engine + Send + Sync>> {
+    ) -> Result<Engine> {
         let features = self.get_features(compiler_config.default_features_for_target(&target))?;
-        let engine: Box<dyn Engine + Send + Sync> = match engine_type {
-            #[cfg(feature = "universal")]
-            EngineType::Universal => Box::new(
-                wasmer_engine_universal::Universal::new(compiler_config)
-                    .features(features)
-                    .target(target)
-                    .engine(),
-            ),
-            #[cfg(feature = "dylib")]
-            EngineType::Dylib => Box::new(
-                wasmer_engine_dylib::Dylib::new(compiler_config)
-                    .target(target)
-                    .features(features)
-                    .engine(),
-            ),
-            #[cfg(feature = "staticlib")]
-            EngineType::Staticlib => Box::new(
-                wasmer_engine_staticlib::Staticlib::new(compiler_config)
-                    .target(target)
-                    .features(features)
-                    .engine(),
-            ),
-            #[cfg(not(all(feature = "universal", feature = "dylib", feature = "staticlib")))]
-            engine => bail!(
-                "The `{}` engine is not included in this binary.",
-                engine.to_string()
-            ),
-        };
+        let engine: Engine = wasmer_compiler::EngineBuilder::new(compiler_config)
+            .set_features(Some(features))
+            .set_target(Some(target))
+            .engine();
 
         Ok(engine)
     }
@@ -192,9 +196,8 @@ impl CompilerOptions {
             }
             #[cfg(feature = "llvm")]
             CompilerType::LLVM => {
-                use std::fmt;
-                use std::fs::File;
-                use std::io::Write;
+                use std::{fmt, fs::File, io::Write};
+
                 use wasmer_compiler_llvm::{
                     CompiledKind, InkwellMemoryBuffer, InkwellModule, LLVMCallbacks, LLVM,
                 };
@@ -236,13 +239,13 @@ impl CompilerOptions {
                         }
                         CompiledKind::FunctionCallTrampoline(func_type) => format!(
                             "trampoline_call_{}_{}",
-                            types_to_signature(&func_type.params()),
-                            types_to_signature(&func_type.results())
+                            types_to_signature(func_type.params()),
+                            types_to_signature(func_type.results())
                         ),
                         CompiledKind::DynamicFunctionTrampoline(func_type) => format!(
                             "trampoline_dynamic_{}_{}",
-                            types_to_signature(&func_type.params()),
-                            types_to_signature(&func_type.results())
+                            types_to_signature(func_type.params()),
+                            types_to_signature(func_type.results())
                         ),
                         CompiledKind::Module => "module".into(),
                     }
@@ -309,6 +312,7 @@ impl CompilerOptions {
 
 /// The compiler used for the store
 #[derive(Debug, PartialEq, Eq)]
+#[allow(clippy::upper_case_acronyms, dead_code)]
 pub enum CompilerType {
     /// Singlepass compiler
     Singlepass,
@@ -317,11 +321,13 @@ pub enum CompilerType {
     /// LLVM compiler
     LLVM,
     /// Headless compiler
+    #[allow(dead_code)]
     Headless,
 }
 
 impl CompilerType {
     /// Return all enabled compilers
+    #[allow(dead_code)]
     pub fn enabled() -> Vec<CompilerType> {
         vec![
             #[cfg(feature = "singlepass")]
@@ -345,138 +351,54 @@ impl ToString for CompilerType {
     }
 }
 
-/// The engine used for the store
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum EngineType {
-    /// Universal Engine
-    Universal,
-    /// Dylib Engine
-    Dylib,
-    /// Static Engine
-    Staticlib,
-}
-
-impl ToString for EngineType {
-    fn to_string(&self) -> String {
-        match self {
-            Self::Universal => "universal".to_string(),
-            Self::Dylib => "dylib".to_string(),
-            Self::Staticlib => "staticlib".to_string(),
-        }
-    }
-}
-
-#[cfg(all(feature = "compiler", feature = "engine"))]
+#[cfg(feature = "compiler")]
 impl StoreOptions {
-    /// Gets the store for the host target, with the engine name and compiler name selected
-    pub fn get_store(&self) -> Result<(Store, EngineType, CompilerType)> {
+    /// Gets the store for the host target, with the compiler name selected
+    pub fn get_store(&self) -> Result<(Store, CompilerType)> {
         let target = Target::default();
         self.get_store_for_target(target)
     }
 
-    /// Gets the store for a given target, with the engine name and compiler name selected, as
-    pub fn get_store_for_target(
-        &self,
-        target: Target,
-    ) -> Result<(Store, EngineType, CompilerType)> {
+    /// Gets the store for a given target, with the compiler name selected.
+    pub fn get_store_for_target(&self, target: Target) -> Result<(Store, CompilerType)> {
         let (compiler_config, compiler_type) = self.compiler.get_compiler_config()?;
-        let (engine, engine_type) = self.get_engine_with_compiler(target, compiler_config)?;
-        let store = Store::new(&*engine);
-        Ok((store, engine_type, compiler_type))
+        let engine = self.get_engine_with_compiler(target, compiler_config)?;
+        let store = Store::new(engine);
+        Ok((store, compiler_type))
     }
 
+    #[cfg(feature = "compiler")]
     fn get_engine_with_compiler(
         &self,
         target: Target,
         compiler_config: Box<dyn CompilerConfig>,
-    ) -> Result<(Box<dyn Engine + Send + Sync>, EngineType)> {
-        let engine_type = self.get_engine()?;
-        let engine = self
-            .compiler
-            .get_engine_by_type(target, compiler_config, engine_type)?;
-
-        Ok((engine, engine_type))
-    }
-}
-
-#[cfg(feature = "engine")]
-impl StoreOptions {
-    fn get_engine(&self) -> Result<EngineType> {
-        if self.universal || self.jit {
-            Ok(EngineType::Universal)
-        } else if self.dylib || self.native {
-            Ok(EngineType::Dylib)
-        } else if self.staticlib || self.object_file {
-            Ok(EngineType::Staticlib)
-        } else {
-            // Auto mode, we choose the best engine for that platform
-            if cfg!(feature = "universal") {
-                Ok(EngineType::Universal)
-            } else if cfg!(feature = "dylib") {
-                Ok(EngineType::Dylib)
-            } else if cfg!(feature = "staticlib") {
-                Ok(EngineType::Staticlib)
-            } else {
-                bail!("There are no available engines for your architecture")
-            }
-        }
+    ) -> Result<Engine> {
+        let engine = self.compiler.get_engine(target, compiler_config)?;
+        Ok(engine)
     }
 }
 
 // If we don't have a compiler, but we have an engine
-#[cfg(all(not(feature = "compiler"), feature = "engine"))]
+#[cfg(not(any(feature = "compiler", feature = "jsc")))]
 impl StoreOptions {
-    fn get_engine_headless(&self) -> Result<(Arc<dyn Engine + Send + Sync>, EngineType)> {
-        let engine_type = self.get_engine()?;
-        let engine: Arc<dyn Engine + Send + Sync> = match engine_type {
-            #[cfg(feature = "universal")]
-            EngineType::Universal => {
-                Arc::new(wasmer_engine_universal::Universal::headless().engine())
-            }
-            #[cfg(feature = "dylib")]
-            EngineType::Dylib => Arc::new(wasmer_engine_dylib::Dylib::headless().engine()),
-            #[cfg(feature = "staticlib")]
-            EngineType::Staticlib => {
-                Arc::new(wasmer_engine_staticlib::Staticlib::headless().engine())
-            }
-            #[cfg(not(all(feature = "universal", feature = "dylib", feature = "staticlib")))]
-            engine => bail!(
-                "The `{}` engine is not included in this binary.",
-                engine.to_string()
-            ),
-        };
-        Ok((engine, engine_type))
+    fn get_engine_headless(&self) -> Result<wasmer_compiler::Engine> {
+        let engine: wasmer_compiler::Engine = wasmer_compiler::EngineBuilder::headless().engine();
+        Ok(engine)
     }
 
     /// Get the store (headless engine)
-    pub fn get_store(&self) -> Result<(Store, EngineType, CompilerType)> {
-        let (engine, engine_type) = self.get_engine_headless()?;
-        let store = Store::new(&*engine);
-        Ok((store, engine_type, CompilerType::Headless))
-    }
-
-    /// Gets the store for provided host target
-    pub fn get_store_for_target(
-        &self,
-        _target: Target,
-    ) -> Result<(Store, EngineType, CompilerType)> {
-        bail!("You need compilers to retrieve a store for a specific target");
+    pub fn get_store(&self) -> Result<(Store, CompilerType)> {
+        let engine = self.get_engine_headless()?;
+        let store = Store::new(engine);
+        Ok((store, CompilerType::Headless))
     }
 }
 
-// If we don't have any engine enabled
-#[cfg(not(feature = "engine"))]
+#[cfg(all(not(feature = "compiler"), feature = "jsc"))]
 impl StoreOptions {
     /// Get the store (headless engine)
-    pub fn get_store(&self) -> Result<(Store, EngineType, CompilerType)> {
-        bail!("No engines are enabled");
-    }
-
-    /// Gets the store for the host target
-    pub fn get_store_for_target(
-        &self,
-        _target: Target,
-    ) -> Result<(Store, EngineType, CompilerType)> {
-        bail!("No engines are enabled");
+    pub fn get_store(&self) -> Result<(Store, CompilerType)> {
+        let store = Store::default();
+        Ok((store, CompilerType::Headless))
     }
 }

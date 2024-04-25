@@ -7,24 +7,21 @@ use inkwell::memory_buffer::MemoryBuffer;
 use inkwell::module::{Linkage, Module};
 use inkwell::targets::FileType;
 use inkwell::DLLStorageClass;
-use loupe::MemoryUsage;
 use rayon::iter::ParallelBridge;
 use rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::sync::Arc;
-use wasmer_compiler::{
-    Architecture, Compilation, CompileError, CompileModuleInfo, Compiler, CustomSection,
-    CustomSectionProtection, Dwarf, FunctionBodyData, ModuleMiddleware, ModuleTranslationState,
-    RelocationTarget, SectionBody, SectionIndex, Symbol, SymbolRegistry, Target,
-    TrampolinesSection,
-};
+use wasmer_compiler::{Compiler, FunctionBodyData, ModuleMiddleware, ModuleTranslationState};
 use wasmer_types::entity::{EntityRef, PrimaryMap};
-use wasmer_types::{FunctionIndex, LocalFunctionIndex, SignatureIndex};
+use wasmer_types::{
+    Compilation, CompileError, CompileModuleInfo, CustomSection, CustomSectionProtection, Dwarf,
+    FunctionIndex, LocalFunctionIndex, RelocationTarget, SectionBody, SectionIndex, SignatureIndex,
+    Symbol, SymbolRegistry, Target,
+};
 
 //use std::sync::Mutex;
 
 /// A compiler that compiles a WebAssembly module with LLVM, translating the Wasm to LLVM IR,
 /// optimizing it and then translating to assembly.
-#[derive(MemoryUsage)]
 pub struct LLVMCompiler {
     config: LLVM,
 }
@@ -46,6 +43,7 @@ struct ShortNames {}
 impl SymbolRegistry for ShortNames {
     fn symbol_to_name(&self, symbol: Symbol) -> String {
         match symbol {
+            Symbol::Metadata => "M".to_string(),
             Symbol::LocalFunction(index) => format!("f{}", index.index()),
             Symbol::Section(index) => format!("s{}", index.index()),
             Symbol::FunctionCallTrampoline(index) => format!("t{}", index.index()),
@@ -58,6 +56,10 @@ impl SymbolRegistry for ShortNames {
             return None;
         }
         let (ty, idx) = name.split_at(1);
+        if ty.starts_with('M') {
+            return Some(Symbol::Metadata);
+        }
+
         let idx = idx.parse::<u32>().ok()?;
         match ty.chars().next().unwrap() {
             'f' => Some(Symbol::LocalFunction(LocalFunctionIndex::from_u32(idx))),
@@ -74,12 +76,12 @@ impl SymbolRegistry for ShortNames {
 }
 
 impl LLVMCompiler {
-    fn compile_native_object<'data, 'module>(
+    fn compile_native_object(
         &self,
         target: &Target,
-        compile_info: &'module CompileModuleInfo,
+        compile_info: &CompileModuleInfo,
         module_translation: &ModuleTranslationState,
-        function_body_inputs: &PrimaryMap<LocalFunctionIndex, FunctionBodyData<'data>>,
+        function_body_inputs: &PrimaryMap<LocalFunctionIndex, FunctionBodyData<'_>>,
         symbol_registry: &dyn SymbolRegistry,
         wasmer_metadata: &[u8],
     ) -> Result<Vec<u8>, CompileError> {
@@ -167,11 +169,15 @@ impl LLVMCompiler {
                 .collect::<Vec<_>>()
                 .as_slice(),
         );
-        let metadata_gv =
-            merged_module.add_global(metadata_init.get_type(), None, "WASMER_METADATA");
+        let metadata_gv = merged_module.add_global(
+            metadata_init.get_type(),
+            None,
+            &symbol_registry.symbol_to_name(wasmer_types::Symbol::Metadata),
+        );
         metadata_gv.set_initializer(&metadata_init);
         metadata_gv.set_linkage(Linkage::DLLExport);
         metadata_gv.set_dll_storage_class(DLLStorageClass::Export);
+        metadata_gv.set_alignment(16);
 
         if self.config().enable_verifier {
             merged_module.verify().unwrap();
@@ -189,18 +195,22 @@ impl LLVMCompiler {
 }
 
 impl Compiler for LLVMCompiler {
+    fn name(&self) -> &str {
+        "llvm"
+    }
+
     /// Get the middlewares for this compiler
     fn get_middlewares(&self) -> &[Arc<dyn ModuleMiddleware>] {
         &self.config.middlewares
     }
 
-    fn experimental_native_compile_module<'data, 'module>(
+    fn experimental_native_compile_module(
         &self,
         target: &Target,
-        compile_info: &'module CompileModuleInfo,
+        compile_info: &CompileModuleInfo,
         module_translation: &ModuleTranslationState,
         // The list of function bodies
-        function_body_inputs: &PrimaryMap<LocalFunctionIndex, FunctionBodyData<'data>>,
+        function_body_inputs: &PrimaryMap<LocalFunctionIndex, FunctionBodyData<'_>>,
         symbol_registry: &dyn SymbolRegistry,
         // The metadata to inject into the wasmer_metadata section of the object file.
         wasmer_metadata: &[u8],
@@ -217,12 +227,12 @@ impl Compiler for LLVMCompiler {
 
     /// Compile the module using LLVM, producing a compilation result with
     /// associated relocations.
-    fn compile_module<'data, 'module>(
+    fn compile_module(
         &self,
         target: &Target,
-        compile_info: &'module CompileModuleInfo,
+        compile_info: &CompileModuleInfo,
         module_translation: &ModuleTranslationState,
-        function_body_inputs: PrimaryMap<LocalFunctionIndex, FunctionBodyData<'data>>,
+        function_body_inputs: PrimaryMap<LocalFunctionIndex, FunctionBodyData<'_>>,
     ) -> Result<Compilation, CompileError> {
         //let data = Arc::new(Mutex::new(0));
         let memory_styles = &compile_info.memory_styles;
@@ -254,7 +264,7 @@ impl Compiler for LLVMCompiler {
                         input,
                         self.config(),
                         memory_styles,
-                        &table_styles,
+                        table_styles,
                         &ShortNames {},
                     )
                 },
@@ -266,7 +276,7 @@ impl Compiler for LLVMCompiler {
                 for (section_index, custom_section) in compiled_function.custom_sections.iter() {
                     // TODO: remove this call to clone()
                     let mut custom_section = custom_section.clone();
-                    for mut reloc in &mut custom_section.relocations {
+                    for reloc in &mut custom_section.relocations {
                         if let RelocationTarget::CustomSection(index) = reloc.reloc_target {
                             reloc.reloc_target = RelocationTarget::CustomSection(
                                 SectionIndex::from_u32(first_section + index.as_u32()),
@@ -278,7 +288,7 @@ impl Compiler for LLVMCompiler {
                         .contains(&section_index)
                     {
                         let offset = frame_section_bytes.len() as u32;
-                        for mut reloc in &mut custom_section.relocations {
+                        for reloc in &mut custom_section.relocations {
                             reloc.offset += offset;
                         }
                         frame_section_bytes.extend_from_slice(custom_section.bytes.as_slice());
@@ -293,7 +303,7 @@ impl Compiler for LLVMCompiler {
                         module_custom_sections.push(custom_section);
                     }
                 }
-                for mut reloc in &mut compiled_function.compiled_function.relocations {
+                for reloc in &mut compiled_function.compiled_function.relocations {
                     if let RelocationTarget::CustomSection(index) = reloc.reloc_target {
                         reloc.reloc_target = RelocationTarget::CustomSection(
                             SectionIndex::from_u32(first_section + index.as_u32()),
@@ -304,52 +314,13 @@ impl Compiler for LLVMCompiler {
             })
             .collect::<PrimaryMap<LocalFunctionIndex, _>>();
 
-        let trampolines = match target.triple().architecture {
-            Architecture::Aarch64(_) => {
-                let nj = 16;
-                // We create a jump to an absolute 64bits address
-                // using x17 as a scratch register, SystemV declare both x16 and x17 as Intra-Procedural  scratch register
-                // but Apple ask to just not use x16
-                // LDR x17, #8      51 00 00 58
-                // BR x17           20 02 1f d6
-                // JMPADDR          00 00 00 00 00 00 00 00
-                let onejump = [
-                    0x51, 0x00, 0x00, 0x58, 0x20, 0x02, 0x1f, 0xd6, 0, 0, 0, 0, 0, 0, 0, 0,
-                ];
-                let trampolines = Some(TrampolinesSection::new(
-                    SectionIndex::from_u32(module_custom_sections.len() as u32),
-                    nj,
-                    onejump.len(),
-                ));
-                let mut alljmps = vec![];
-                for _ in 0..nj {
-                    alljmps.extend(onejump.iter().copied());
-                }
-                module_custom_sections.push(CustomSection {
-                    protection: CustomSectionProtection::ReadExecute,
-                    bytes: SectionBody::new_with_vec(alljmps),
-                    relocations: vec![],
-                });
-                trampolines
-            }
-            _ => None,
-        };
-
         let dwarf = if !frame_section_bytes.is_empty() {
             let dwarf = Some(Dwarf::new(SectionIndex::from_u32(
                 module_custom_sections.len() as u32,
             )));
-            // Terminating zero-length CIE.
-            frame_section_bytes.extend(vec![
-                0x00, 0x00, 0x00, 0x00, // Length
-                0x00, 0x00, 0x00, 0x00, // CIE ID
-                0x10, // Version (must be 1)
-                0x00, // Augmentation data
-                0x00, // Code alignment factor
-                0x00, // Data alignment factor
-                0x00, // Return address register
-                0x00, 0x00, 0x00, // Padding to a multiple of 4 bytes
-            ]);
+            // Do not terminate dwarf info with a zero-length CIE.
+            // Because more info will be added later
+            // in lib/object/src/module.rs emit_compilation
             module_custom_sections.push(CustomSection {
                 protection: CustomSectionProtection::Read,
                 bytes: SectionBody::new_with_vec(frame_section_bytes),
@@ -386,20 +357,19 @@ impl Compiler for LLVMCompiler {
                     FuncTrampoline::new(target_machine)
                 },
                 |func_trampoline, func_type| {
-                    func_trampoline.dynamic_trampoline(&func_type, self.config(), "")
+                    func_trampoline.dynamic_trampoline(func_type, self.config(), "")
                 },
             )
             .collect::<Result<Vec<_>, CompileError>>()?
             .into_iter()
             .collect::<PrimaryMap<_, _>>();
 
-        Ok(Compilation::new(
+        Ok(Compilation {
             functions,
-            module_custom_sections,
+            custom_sections: module_custom_sections,
             function_call_trampolines,
             dynamic_function_trampolines,
-            dwarf,
-            trampolines,
-        ))
+            debug: dwarf,
+        })
     }
 }

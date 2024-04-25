@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```rust
-//! # use inline_c::assert_c;
+//! # use wasmer_inline_c::assert_c;
 //! # fn main() {
 //! #    (assert_c! {
 //! # #include "tests/wasmer.h"
@@ -54,7 +54,6 @@
 //! ```
 
 use super::super::types::wasm_name_t;
-use crate::error::CApiError;
 use enumset::EnumSet;
 use std::slice;
 use std::str::{self, FromStr};
@@ -69,6 +68,7 @@ use wasmer_api::{CpuFeature, Target, Triple};
 #[derive(Debug)]
 #[allow(non_camel_case_types)]
 pub struct wasmer_target_t {
+    #[allow(unused)]
     pub(crate) inner: Target,
 }
 
@@ -88,7 +88,7 @@ pub extern "C" fn wasmer_target_new(
     let cpu_features = cpu_features?;
 
     Some(Box::new(wasmer_target_t {
-        inner: Target::new(triple.inner.clone(), cpu_features.inner.clone()),
+        inner: Target::new(triple.inner.clone(), cpu_features.inner),
     }))
 }
 
@@ -109,7 +109,7 @@ pub extern "C" fn wasmer_target_delete(_target: Option<Box<wasmer_target_t>>) {}
 /// # Example
 ///
 /// ```rust
-/// # use inline_c::assert_c;
+/// # use wasmer_inline_c::assert_c;
 /// # fn main() {
 /// #    (assert_c! {
 /// # #include "tests/wasmer.h"
@@ -153,7 +153,7 @@ pub unsafe extern "C" fn wasmer_triple_new(
     )));
 
     Some(Box::new(wasmer_triple_t {
-        inner: c_try!(Triple::from_str(triple).map_err(|e| CApiError { msg: e.to_string() })),
+        inner: c_try!(Triple::from_str(triple)),
     }))
 }
 
@@ -162,7 +162,7 @@ pub unsafe extern "C" fn wasmer_triple_new(
 /// # Example
 ///
 /// ```rust
-/// # use inline_c::assert_c;
+/// # use wasmer_inline_c::assert_c;
 /// # fn main() {
 /// #    (assert_c! {
 /// # #include "tests/wasmer.h"
@@ -226,7 +226,7 @@ pub extern "C" fn wasmer_triple_delete(_triple: Option<Box<wasmer_triple_t>>) {}
 /// # Example
 ///
 /// ```rust
-/// # use inline_c::assert_c;
+/// # use wasmer_inline_c::assert_c;
 /// # fn main() {
 /// #    (assert_c! {
 /// # #include "tests/wasmer.h"

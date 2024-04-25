@@ -39,10 +39,9 @@ mod tests {
             We also check that the command executed correctly!
         */
         let command_success = command.status.success();
-        let test_success = stderr.contains("** TEST FAILED **") == false;
-        let success = command_success && test_success;
+        let test_success = !stderr.contains("** TEST FAILED **");
 
-        return success;
+        command_success && test_success
     }
 
     fn remove_existing_artificats() -> Output {

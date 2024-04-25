@@ -10,9 +10,8 @@
 //!
 //! Ready?
 
-use wasmer::{imports, wat2wasm, Features, Instance, Module, Store, Value};
+use wasmer::{imports, wat2wasm, EngineBuilder, Features, Instance, Module, Store, Value};
 use wasmer_compiler_cranelift::Cranelift;
-use wasmer_engine_universal::Universal;
 
 fn main() -> anyhow::Result<()> {
     // Let's declare the Wasm module with the text representation.
@@ -36,21 +35,26 @@ fn main() -> anyhow::Result<()> {
     features.multi_value(true);
 
     // Set up the engine. That's where we define the features!
-    let engine = Universal::new(compiler).features(features);
+    let engine = EngineBuilder::new(compiler).set_features(Some(features));
 
     // Now, let's define the store, and compile the module.
-    let store = Store::new(&engine.engine());
+    let mut store = Store::new(engine);
     let module = Module::new(&store, wasm_bytes)?;
 
     // Finally, let's instantiate the module, and execute something
     // :-).
     let import_object = imports! {};
-    let instance = Instance::new(&module, &import_object)?;
+    let instance = Instance::new(&mut store, &module, &import_object)?;
     let swap = instance.exports.get_function("swap")?;
 
-    let results = swap.call(&[Value::I32(1), Value::I64(2)])?;
+    let results = swap.call(&mut store, &[Value::I32(1), Value::I64(2)])?;
 
     assert_eq!(results.to_vec(), vec![Value::I64(2), Value::I32(1)]);
 
     Ok(())
+}
+
+#[test]
+fn test_features() -> anyhow::Result<()> {
+    main()
 }

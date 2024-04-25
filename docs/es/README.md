@@ -43,7 +43,7 @@
 
 ## Empezamos?
 
-Wasmer no requiere ninguna dependencia. Puedes instalarlo con uno de éstos instaladores:
+Wasmer no requiere ninguna dependencia. Puedes instalarlo con uno de estos instaladores:
 
 ```sh
 curl https://get.wasmer.io -sSfL | sh
@@ -83,7 +83,7 @@ qjs >
 
 ## Integraciones en diferentes Lenguajes
 
-📦 Wasmer puede ser usado como una librería **integrado en diferentes lenguajes de programación**, para que puedas ejecutar WebAssembly _en cualquier sitio_.
+📦 Wasmer puede ser usado como una librería **integrada en diferentes lenguajes de programación**, para que puedas ejecutar WebAssembly _en cualquier sitio_.
 
 | &nbsp; | Lenguaje | Librería | Documentación |
 |-|-|-|-|
@@ -102,6 +102,7 @@ qjs >
 | ![Postgres logo] | [**Postgres**][Postgres integration] | *sin paquete publicado* | [Documentación][postgres docs] |
 |  | [**Swift**][Swift integration] | *sin paquete publicado* | |
 | ![Zig logo] | [**Zig**][Zig integration] | *no published package* | |
+| ![Ocaml logo] | [**OCaml**][OCaml integration] | [`wasmer` OCaml package] | |
 
 [👋 Falta algún lenguaje?](https://github.com/wasmerio/wasmer/issues/new?assignees=&labels=%F0%9F%8E%89+enhancement&template=---feature-request.md&title=)
 
@@ -173,6 +174,10 @@ qjs >
 [zig logo]: https://raw.githubusercontent.com/ziglang/logo/master/zig-favicon.png
 [zig integration]: https://github.com/zigwasm/wasmer-zig
 
+[OCaml logo]: https://raw.githubusercontent.com/wasmerio/wasmer/master/assets/languages/ocaml.svg
+[OCaml integration]: https://github.com/wasmerio/wasmer-ocaml
+[`wasmer` OCaml package]: https://opam.ocaml.org/packages/wasmer/
+
 ## Contribuye
 
 **Damos la bienvenida a cualquier forma de contribución, especialmente a los nuevos miembros de la comunidad** 💜
@@ -181,7 +186,7 @@ qjs >
 
 ### Tests
 
-Testear quieres? Los [documentos de Wasmer te enseñarán cómo](https://docs.wasmer.io/ecosystem/wasmer/building-from-source/testing).
+¿Quieres testear? Los [documentos de Wasmer te enseñarán cómo](https://docs.wasmer.io/ecosystem/wasmer/building-from-source/testing).
 
 ## Comunidad
 

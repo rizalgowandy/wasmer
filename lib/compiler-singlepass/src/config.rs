@@ -2,21 +2,15 @@
 #![allow(unused_imports, dead_code)]
 
 use crate::compiler::SinglepassCompiler;
-use loupe::MemoryUsage;
 use std::sync::Arc;
-use wasmer_compiler::{
-    CallingConvention, Compiler, CompilerConfig, CpuFeature, ModuleMiddleware, Target,
-};
-use wasmer_types::Features;
+use wasmer_compiler::{Compiler, CompilerConfig, Engine, EngineBuilder, ModuleMiddleware};
+use wasmer_types::{CpuFeature, Features, Target};
 
-#[derive(Debug, Clone, MemoryUsage)]
+#[derive(Debug, Clone)]
 pub struct Singlepass {
     pub(crate) enable_nan_canonicalization: bool,
-    pub(crate) enable_stack_check: bool,
     /// The middleware chain.
     pub(crate) middlewares: Vec<Arc<dyn ModuleMiddleware>>,
-    #[loupe(skip)]
-    pub(crate) calling_convention: CallingConvention,
 }
 
 impl Singlepass {
@@ -25,31 +19,8 @@ impl Singlepass {
     pub fn new() -> Self {
         Self {
             enable_nan_canonicalization: true,
-            enable_stack_check: false,
             middlewares: vec![],
-            calling_convention: match Target::default().triple().default_calling_convention() {
-                Ok(CallingConvention::WindowsFastcall) => CallingConvention::WindowsFastcall,
-                Ok(CallingConvention::SystemV) => CallingConvention::SystemV,
-                //Ok(CallingConvention::AppleAarch64) => AppleAarch64,
-                _ => panic!("Unsupported Calling convention for Singlepass"),
-            },
         }
-    }
-
-    /// Enable stack check.
-    ///
-    /// When enabled, an explicit stack depth check will be performed on entry
-    /// to each function to prevent stack overflow.
-    ///
-    /// Note that this doesn't guarantee deterministic execution across
-    /// different platforms.
-    pub fn enable_stack_check(&mut self, enable: bool) -> &mut Self {
-        self.enable_stack_check = enable;
-        self
-    }
-
-    fn enable_nan_canonicalization(&mut self) {
-        self.enable_nan_canonicalization = true;
     }
 
     pub fn canonicalize_nans(&mut self, enable: bool) -> &mut Self {
@@ -85,5 +56,11 @@ impl CompilerConfig for Singlepass {
 impl Default for Singlepass {
     fn default() -> Singlepass {
         Self::new()
+    }
+}
+
+impl From<Singlepass> for Engine {
+    fn from(config: Singlepass) -> Self {
+        EngineBuilder::new(config).engine()
     }
 }
